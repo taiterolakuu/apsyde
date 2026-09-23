@@ -296,3 +296,9 @@ int heap_check(void) {
     }
     return 1;
 }
+/* ============ Для VMM ============ */
+
+void heap_get_range(uint64_t *start, uint64_t *end) {
+    if (start) *start = (uint64_t)g_heap_start;
+    if (end)   *end   = (uint64_t)g_heap_end;
+}

@@ -1,5 +1,6 @@
 #include "vmm.h"
 #include "pmm.h"
+#include "heap.h"
 #include "kmalloc.h"
 #include "../lib/kprintf.h"
 #include "../lib/panic.h"
@@ -139,6 +140,28 @@ uint64_t vmm_get_phys(address_space_t *as, uint64_t virt) {
     return (pt[PT_INDEX(virt)] & PTE_ADDR_MASK) | (virt & 0xFFF);
 }
 
+/* ============ Вспомогательное: маппинг диапазона в higher-half ============ */
+
+/* Замапить [phys_start, phys_end) по адресам KERNEL_VIRT_BASE + phys.
+ * Identity mapping тоже оставляем — этот маппинг дополнительный. */
+static void map_higher_half(uint64_t phys_start, uint64_t phys_end,
+                            uint64_t flags, const char *what) {
+    uint64_t start = phys_start & ~0xFFFULL;
+    uint64_t end   = (phys_end + 0xFFF) & ~0xFFFULL;
+    uint64_t pages = (end - start) / 4096;
+
+    for (uint64_t i = 0; i < pages; i++) {
+        uint64_t phys = start + i * 4096;
+        uint64_t virt = KERNEL_VIRT_BASE + phys;
+        vmm_map(g_kernel_as, virt, phys, flags);
+    }
+
+    kprintf("[+] VMM: %s higher-half mapped: %u страниц (%x..%x)\n",
+            what, (uint32_t)pages,
+            KERNEL_VIRT_BASE + start,
+            KERNEL_VIRT_BASE + end);
+}
+
 /* ============ Инициализация ============ */
 
 void vmm_init(void) {
@@ -149,10 +172,8 @@ void vmm_init(void) {
     g_kernel_as->refcount = 1;
     g_kernel_as->flags = 0;
 
-    /* ============ 1. Ядро (включая стек) ============ */
+    /* ============ 1. Ядро (включая стек) — identity ============ */
 
-    /* Это САМОЕ ВАЖНОЕ. __kernel_start..__kernel_end может попадать
-     * в LoaderData (RESERVED), поэтому мапим его явно. */
     extern char __kernel_start[];
     extern char __kernel_end[];
 
@@ -167,7 +188,7 @@ void vmm_init(void) {
     kprintf("[+] VMM: kernel mapped: %u страниц (%x..%x)\n",
             (uint32_t)kpages, kstart, kend);
 
-    /* ============ 2. RAM ============ */
+    /* ============ 2. RAM — identity ============ */
 
     int region_count = 0;
     const pmm_region_t *regions = pmm_regions(&region_count);
@@ -190,7 +211,7 @@ void vmm_init(void) {
             (uint32_t)ram_pages,
             (uint32_t)(ram_pages * 4096 / (1024 * 1024)));
 
-    /* ============ 3. Framebuffer (MMIO) ============ */
+    /* ============ 3. Framebuffer — identity + MMIO ============ */
 
     const boot_info_t *bi = shell_get_boot_info();
     if (bi && bi->framebuffer_base) {
@@ -207,11 +228,26 @@ void vmm_init(void) {
                 (uint32_t)fb_pages);
     }
 
-    /* ============ 4. Self-check ДО переключения ============ */
+    /* ============ 4. Higher-half mapping (B3) ============ */
 
-    /* Проверяем, что для адреса ядра мы можем получить физический
-     * адрес из наших таблиц. Если не можем — что-то не так с маппингом,
-     * и переключаться нельзя. */
+    /* Дополнительный маппинг ядра и heap по адресам
+     * KERNEL_VIRT_BASE + phys. Identity mapping сохранён,
+     * переключения CR3 нет. Этот маппинг нужен для будущего
+     * перехода на higher-half (этап B4). */
+
+    map_higher_half(kstart, kend, VMM_KERNEL_RW, "kernel");
+
+    /* Heap — тоже нужен в higher-half, потому что kmalloc возвращает
+     * указатели, которые будут использоваться по higher-half адресам. */
+    uint64_t hstart = 0, hend = 0;
+    heap_get_range(&hstart, &hend);
+
+    if (hstart && hend > hstart) {
+        map_higher_half(hstart, hend, VMM_KERNEL_RW, "heap");
+    }
+
+    /* ============ 5. Self-check ДО переключения ============ */
+
     uint64_t self_addr = (uint64_t)vmm_init;
     uint64_t self_phys = vmm_get_phys(g_kernel_as, self_addr);
 
@@ -223,7 +259,19 @@ void vmm_init(void) {
         panic("vmm_init: self-check failed — переключение CR3 отменено");
     }
 
-    /* ============ 5. Переключаемся на свои таблицы ============ */
+    /* Проверяем higher-half маппинг того же адреса */
+    uint64_t hh_addr = KERNEL_VIRT_BASE + self_addr;
+    uint64_t hh_phys = vmm_get_phys(g_kernel_as, hh_addr);
+
+    kprintf("[+] VMM: higher-half self-check virt %x -> phys %x: %s\n",
+            hh_addr, hh_phys,
+            (hh_phys == self_addr) ? "OK" : "FAIL");
+
+    if (hh_phys != self_addr) {
+        panic("vmm_init: higher-half self-check failed");
+    }
+
+    /* ============ 6. Переключаемся на свои таблицы ============ */
 
     kprintf("[+] VMM: переключаемся на CR3 = %x\n", pml4_phys);
     vmm_switch_to(g_kernel_as);
@@ -267,7 +315,6 @@ void vmm_destroy_address_space(address_space_t *as) {
         return;
     }
 
-    /* Пока не освобождаем таблицы — упрощение. */
     kfree(as);
 }
 
@@ -276,7 +323,6 @@ void vmm_switch_to(address_space_t *as) {
 
     uint64_t cr3 = (uint64_t)as->pml4;
 
-    /* Перезагружаем CR3 дважды — гарантирует полный сброс TLB. */
     __asm__ volatile (
         "mov %0, %%cr3\n"
         "mov %%cr3, %%rax\n"
@@ -295,6 +341,7 @@ void vmm_dump_current(void) {
     kprintf("g_kernel_as:    %p\n", g_kernel_as);
     kprintf("kernel PML4:    %p\n", g_kernel_as->pml4);
     kprintf("refcount:       %u\n", g_kernel_as->refcount);
+    kprintf("KERNEL_VIRT_BASE: %x\n", KERNEL_VIRT_BASE);
 }
 
 void vmm_walk(address_space_t *as, uint64_t virt) {

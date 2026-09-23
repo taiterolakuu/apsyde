@@ -1,5 +1,6 @@
 #ifndef VMM_H
 #define VMM_H
+#define KERNEL_VIRT_BASE   0xFFFFFFFF80000000ULL
 #include <stdint.h>
 
 /* ============ Флаги PTE ============ */

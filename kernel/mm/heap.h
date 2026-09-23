@@ -48,4 +48,10 @@ void heap_dump(int max_blocks);
  * нет ли дублирующихся блоков. Возвращает 1 если OK, 0 если повреждён. */
 int heap_check(void);
 
+/* ============ Для VMM ============ */
+
+/* Возвращает физические границы heap. Используется VMM, чтобы
+ * замапить heap в higher-half (этап B3). */
+void heap_get_range(uint64_t *start, uint64_t *end);
+
 #endif
