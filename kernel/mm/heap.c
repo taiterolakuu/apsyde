@@ -6,28 +6,22 @@
 
 /* ============ Внутренние структуры ============ */
 
-/* Заголовок блока. Размер — ровно 32 байта, чтобы user-данные
- * после заголовка были выровнены на HEAP_ALIGNMENT (16 байт). */
 typedef struct block_header {
-    uint32_t magic;         /* HEAP_MAGIC_FREE / HEAP_MAGIC_USED */
-    uint32_t size;          /* размер user-данных (без заголовка) */
-    struct block_header *next_free;   /* только для свободных блоков */
-    uint32_t flags;         /* 0 = занят, 1 = свободен */
+    uint32_t magic;
+    uint32_t size;
+    struct block_header *next_free;
+    uint32_t flags;
     uint32_t _pad0;
-    uint64_t _pad1;         /* для выравнивания до 32 байт */
+    uint64_t _pad1;
 } block_header_t;
 
 #define HEADER_SIZE  sizeof(block_header_t)
 
-/* Проверка на этапе компиляции: заголовок должен быть 32 байта,
- * иначе user-данные не будут выровнены на 16. */
 _Static_assert(sizeof(block_header_t) == 32,
                "block_header_t must be 32 bytes for 16-byte alignment");
 
-/* Приводим размер user-данных к кратному 16 */
 #define ALIGN_UP(x)  (((x) + HEAP_ALIGNMENT - 1) & ~(HEAP_ALIGNMENT - 1))
 
-/* Следующий блок в памяти */
 static inline block_header_t *next_block(block_header_t *b) {
     return (block_header_t *)((uint8_t *)b + HEADER_SIZE + b->size);
 }
@@ -38,7 +32,6 @@ static uint8_t  *g_heap_start = NULL;
 static uint8_t  *g_heap_end   = NULL;
 static block_header_t *g_free_list = NULL;
 
-/* Статистика */
 static uint64_t g_alloc_count  = 0;
 static uint64_t g_free_count   = 0;
 static uint64_t g_total_blocks = 0;
@@ -54,7 +47,6 @@ void heap_init(void) {
     g_heap_start = (uint8_t *)base;
     g_heap_end   = g_heap_start + HEAP_INITIAL_PAGES * 4096;
 
-    /* Один большой свободный блок на весь регион */
     block_header_t *b = (block_header_t *)g_heap_start;
     b->magic     = HEAP_MAGIC_FREE;
     b->size      = (uint32_t)((g_heap_end - g_heap_start) - HEADER_SIZE);
@@ -74,7 +66,6 @@ void heap_init(void) {
 
 /* ============ Вспомогательные ============ */
 
-/* Проверка, что указатель принадлежит нашему heap */
 static int is_in_heap(void *ptr) {
     uint8_t *p = (uint8_t *)ptr;
     return p >= g_heap_start && p < g_heap_end;
@@ -88,7 +79,6 @@ void *heap_alloc(size_t size) {
     size_t aligned = ALIGN_UP(size);
     if (aligned > (uint32_t)-1) return NULL;
 
-    /* First-fit: ищем первый подходящий свободный блок */
     block_header_t *prev = NULL;
     block_header_t *b = g_free_list;
 
@@ -101,7 +91,6 @@ void *heap_alloc(size_t size) {
             uint32_t remaining = b->size - (uint32_t)aligned;
 
             if (remaining >= HEADER_SIZE + HEAP_ALIGNMENT) {
-                /* Создаём новый свободный блок после выделенного */
                 block_header_t *new_b =
                     (block_header_t *)((uint8_t *)b + HEADER_SIZE + aligned);
 
@@ -135,13 +124,11 @@ void *heap_alloc(size_t size) {
         b = b->next_free;
     }
 
-    /* Нет подходящего блока — heap исчерпан.
-     * В будущем здесь будет heap_grow(). Пока — NULL. */
     return NULL;
 }
 
 void heap_free(void *ptr) {
-    if (!ptr) return;   /* free(NULL) — no-op */
+    if (!ptr) return;
 
     if (!is_in_heap(ptr)) {
         panic("heap_free: указатель вне heap: %p", ptr);
@@ -156,7 +143,6 @@ void heap_free(void *ptr) {
         panic("heap_free: повреждён заголовок %p (magic=%x)", ptr, b->magic);
     }
 
-    /* Помечаем как свободный */
     b->magic = HEAP_MAGIC_FREE;
     b->flags = 1;
     b->next_free = g_free_list;
@@ -164,12 +150,10 @@ void heap_free(void *ptr) {
     g_free_blocks++;
     g_free_count++;
 
-    /* Coalescing: сливаем с последующим свободным блоком, если он есть */
     block_header_t *next = next_block(b);
     if ((uint8_t *)next < g_heap_end &&
         next->magic == HEAP_MAGIC_FREE) {
 
-        /* Удаляем next из free-list */
         if (g_free_list == next) {
             g_free_list = next->next_free;
         } else {
@@ -179,23 +163,19 @@ void heap_free(void *ptr) {
         }
         g_free_blocks--;
 
-        /* Расширяем b */
         b->size += HEADER_SIZE + next->size;
         g_total_blocks--;
     }
 }
 
 void *heap_realloc(void *ptr, size_t new_size) {
-    /* krealloc(NULL, size) = kmalloc(size) */
     if (!ptr) return heap_alloc(new_size);
 
-    /* krealloc(ptr, 0) = kfree(ptr), return NULL */
     if (new_size == 0) {
         heap_free(ptr);
         return NULL;
     }
 
-    /* Пока всегда: новый блок + копирование + освобождение старого */
     block_header_t *b = (block_header_t *)((uint8_t *)ptr - HEADER_SIZE);
 
     size_t old_size = b->size;
@@ -211,8 +191,6 @@ void *heap_realloc(void *ptr, size_t new_size) {
 
 void *heap_calloc(size_t n, size_t size) {
     if (n == 0 || size == 0) return NULL;
-
-    /* Защита от переполнения */
     if (n > ((size_t)-1) / size) return NULL;
 
     size_t total = n * size;
@@ -227,7 +205,6 @@ void heap_get_stats(heap_stats_t *out) {
     if (!out) return;
 
     uint64_t total = (uint64_t)(g_heap_end - g_heap_start);
-
     uint64_t used_bytes = 0;
     uint64_t used_blocks = 0;
 
@@ -239,7 +216,7 @@ void heap_get_stats(heap_stats_t *out) {
         } else if (b->magic == HEAP_MAGIC_FREE) {
             /* ок */
         } else {
-            break;   /* повреждение */
+            break;
         }
         b = next_block(b);
     }
@@ -296,6 +273,7 @@ int heap_check(void) {
     }
     return 1;
 }
+
 /* ============ Для VMM ============ */
 
 void heap_get_range(uint64_t *start, uint64_t *end) {

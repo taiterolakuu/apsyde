@@ -38,7 +38,7 @@ static inline int is_page_aligned(uint64_t addr) {
 static uint64_t alloc_table(void) {
     void *page = pmm_alloc_page();
     if (!page) return 0;
-    uint64_t phys = virt_to_phys(page);
+    uint64_t phys = (uint64_t)page;
     memset(phys_to_virt(phys), 0, 4096);
     return phys;
 }
@@ -140,10 +140,8 @@ uint64_t vmm_get_phys(address_space_t *as, uint64_t virt) {
     return (pt[PT_INDEX(virt)] & PTE_ADDR_MASK) | (virt & 0xFFF);
 }
 
-/* ============ Вспомогательное: маппинг диапазона в higher-half ============ */
+/* ============ Вспомогательное ============ */
 
-/* Замапить [phys_start, phys_end) по адресам KERNEL_VIRT_BASE + phys.
- * Identity mapping тоже оставляем — этот маппинг дополнительный. */
 static void map_higher_half(uint64_t phys_start, uint64_t phys_end,
                             uint64_t flags, const char *what) {
     uint64_t start = phys_start & ~0xFFFULL;
@@ -172,7 +170,7 @@ void vmm_init(void) {
     g_kernel_as->refcount = 1;
     g_kernel_as->flags = 0;
 
-    /* ============ 1. Ядро (включая стек) — identity ============ */
+    /* ============ 1. Ядро — identity ============ */
 
     extern char __kernel_start[];
     extern char __kernel_end[];
@@ -188,7 +186,7 @@ void vmm_init(void) {
     kprintf("[+] VMM: kernel mapped: %u страниц (%x..%x)\n",
             (uint32_t)kpages, kstart, kend);
 
-    /* ============ 2. RAM — identity ============ */
+    /* ============ 2. RAM — identity + higher-half ============ */
 
     int region_count = 0;
     const pmm_region_t *regions = pmm_regions(&region_count);
@@ -200,18 +198,29 @@ void vmm_init(void) {
 
         if (r->flags & PMM_REGION_USABLE) {
             for (uint64_t j = 0; j < r->pages; j++) {
-                uint64_t addr = r->base + j * 4096;
-                vmm_map(g_kernel_as, addr, addr, VMM_KERNEL_RW);
+                uint64_t phys = r->base + j * 4096;
+
+                vmm_map(g_kernel_as, phys, phys, VMM_KERNEL_RW);
+                vmm_map(g_kernel_as, KERNEL_VIRT_BASE + phys, phys,
+                        VMM_KERNEL_RW);
+
                 ram_pages++;
             }
         }
     }
 
-    kprintf("[+] VMM: RAM mapped: %u страниц (%u МБ)\n",
+    kprintf("[+] VMM: RAM mapped: %u страниц (%u МБ), identity + higher-half\n",
             (uint32_t)ram_pages,
             (uint32_t)(ram_pages * 4096 / (1024 * 1024)));
 
-    /* ============ 3. Framebuffer — identity + MMIO ============ */
+    /* ============ 3. Framebuffer — ТОЛЬКО identity ============ */
+
+    /* Framebuffer = 0x80000000 (2 ГБ). KERNEL_VIRT_BASE + phys даёт
+     * переполнение uint64_t, поэтому higher-half маппинг невозможен
+     * без отдельного виртуального региона для MMIO.
+     *
+     * Это нормально: fb.c обращается к framebuffer через identity-адрес
+     * (тот, что дал UEFI), и он работает. */
 
     const boot_info_t *bi = shell_get_boot_info();
     if (bi && bi->framebuffer_base) {
@@ -221,24 +230,17 @@ void vmm_init(void) {
         uint64_t fb_pages = (fb_end - fb_start) / 4096;
 
         for (uint64_t i = 0; i < fb_pages; i++) {
-            uint64_t addr = fb_start + i * 4096;
-            vmm_map(g_kernel_as, addr, addr, VMM_MMIO);
+            uint64_t phys = fb_start + i * 4096;
+            vmm_map(g_kernel_as, phys, phys, VMM_MMIO);
         }
-        kprintf("[+] VMM: framebuffer mapped: %u страниц\n",
+        kprintf("[+] VMM: framebuffer mapped: %u страниц (identity only, MMIO)\n",
                 (uint32_t)fb_pages);
     }
 
-    /* ============ 4. Higher-half mapping (B3) ============ */
-
-    /* Дополнительный маппинг ядра и heap по адресам
-     * KERNEL_VIRT_BASE + phys. Identity mapping сохранён,
-     * переключения CR3 нет. Этот маппинг нужен для будущего
-     * перехода на higher-half (этап B4). */
+    /* ============ 4. Higher-half для ядра и heap (явно) ============ */
 
     map_higher_half(kstart, kend, VMM_KERNEL_RW, "kernel");
 
-    /* Heap — тоже нужен в higher-half, потому что kmalloc возвращает
-     * указатели, которые будут использоваться по higher-half адресам. */
     uint64_t hstart = 0, hend = 0;
     heap_get_range(&hstart, &hend);
 
@@ -246,7 +248,7 @@ void vmm_init(void) {
         map_higher_half(hstart, hend, VMM_KERNEL_RW, "heap");
     }
 
-    /* ============ 5. Self-check ДО переключения ============ */
+    /* ============ 5. Self-check ============ */
 
     uint64_t self_addr = (uint64_t)vmm_init;
     uint64_t self_phys = vmm_get_phys(g_kernel_as, self_addr);
@@ -259,7 +261,7 @@ void vmm_init(void) {
         panic("vmm_init: self-check failed — переключение CR3 отменено");
     }
 
-    /* Проверяем higher-half маппинг того же адреса */
+    /* Проверяем higher-half маппинг */
     uint64_t hh_addr = KERNEL_VIRT_BASE + self_addr;
     uint64_t hh_phys = vmm_get_phys(g_kernel_as, hh_addr);
 
@@ -294,8 +296,6 @@ address_space_t *vmm_create_address_space(void) {
     as->refcount = 1;
     as->flags    = 0;
 
-    /* Копируем PML4 ядра — kernel-часть должна быть доступна
-     * в любом address space. */
     uint64_t *dst = table_ptr(pml4_phys);
     uint64_t *src = table_ptr((uint64_t)g_kernel_as->pml4);
 
