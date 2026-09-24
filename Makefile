@@ -103,9 +103,10 @@ run: image
 # --- Запуск: графическое окно ---
 run-gtk: image
 	qemu-system-x86_64 \
-	    -machine q35 \
+	    -machine pc \
 	    -m 1024 \
 	    -device usb-ehci \
+	    -device usb-kbd \
 	    -drive if=pflash,format=raw,readonly=on,file=$(OVMF) \
 	    -drive format=raw,file=fat:rw:build/esp \
 	    -serial file:build/serial.log \
