@@ -74,6 +74,10 @@ uint16_t pci_read16(uint8_t bus, uint8_t dev, uint8_t func, uint8_t off);
 uint8_t  pci_read8 (uint8_t bus, uint8_t dev, uint8_t func, uint8_t off);
 void     pci_write32(uint8_t bus, uint8_t dev, uint8_t func, uint8_t off, uint32_t val);
 
+/* Определение размера BAR (в байтах). Возвращает 0 при ошибке.
+ * Для MMIO — маскирует младшие 4 бита, для I/O — младшие 2. */
+uint32_t pci_bar_size(uint8_t bus, uint8_t dev, uint8_t func, int bar);
+
 /* Доступ к найденным устройствам */
 int                pci_device_count(void);
 const pci_device_t *pci_device_get(int idx);

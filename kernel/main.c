@@ -21,7 +21,6 @@
 
 static boot_info_t g_boot_info;
 
-/* Экспорт для shell — команды 'mem' и 'pmm_regions' читают данные */
 const boot_info_t *shell_get_boot_info(void) {
     return &g_boot_info;
 }
@@ -52,15 +51,60 @@ static void timer_handler(regs_t *r) {
     pit_tick();
 }
 
+/* ============ Автотест EHCI ============ */
+
+static void ehci_autotest(void) {
+    kprintf("\n[AUTO] EHCI ports scan:\n");
+
+    /* Проверяем все порты (до 16, но реально g_num_ports) */
+    int found_port = -1;
+    for (int p = 0; p < 16; p++) {
+        if (ehci_port_connected(p)) {
+            kprintf("[AUTO] устройство на порту %d\n", p);
+            found_port = p;
+            break;
+        }
+    }
+
+    if (found_port < 0) {
+        kprintf("[AUTO] устройств на портах нет\n");
+        return;
+    }
+
+    /* Reset найденного порта */
+    ehci_reset_port(found_port);
+
+    /* Пробуем прочитать Device Descriptor с addr=0 */
+    usb_device_descriptor_t desc;
+    if (ehci_get_device_descriptor(0, &desc) != 0) {
+        kprintf("[AUTO] GET_DESCRIPTOR failed\n");
+        return;
+    }
+
+    kprintf("[AUTO] Device Descriptor:\n");
+    kprintf("       bLength            = %u\n", (uint32_t)desc.bLength);
+    kprintf("       bDescriptorType    = %u\n", (uint32_t)desc.bDescriptorType);
+    kprintf("       bcdUSB             = %x\n", (uint32_t)desc.bcdUSB);
+    kprintf("       bDeviceClass       = %u\n", (uint32_t)desc.bDeviceClass);
+    kprintf("       bDeviceSubClass    = %u\n", (uint32_t)desc.bDeviceSubClass);
+    kprintf("       bDeviceProtocol    = %u\n", (uint32_t)desc.bDeviceProtocol);
+    kprintf("       bMaxPacketSize0    = %u\n", (uint32_t)desc.bMaxPacketSize0);
+    kprintf("       idVendor           = %x\n", (uint32_t)desc.idVendor);
+    kprintf("       idProduct          = %x\n", (uint32_t)desc.idProduct);
+    kprintf("       bcdDevice          = %x\n", (uint32_t)desc.bcdDevice);
+    kprintf("       bNumConfigurations = %u\n", (uint32_t)desc.bNumConfigurations);
+}
+
+/* ============ kernel_main ============ */
+
 void kernel_main(boot_info_t *bi) {
     serial_init();
     validate_boot_info(bi);
     memcpy(&g_boot_info, bi, sizeof(boot_info_t));
 
-    /* Framebuffer как можно раньше — весь kprintf пойдёт в оба канала */
     fb_init(&g_boot_info);
-
     fb_clear();
+
     kprintf("\n");
     kprintf("========================================\n");
     kprintf("  Celestis Kernel\n");
@@ -85,10 +129,9 @@ void kernel_main(boot_info_t *bi) {
     keyboard_init();
     kprintf("[+] PS/2 клавиатура подключена (IRQ1)\n");
 
-    /* --- PMM: управление физическими страницами --- */
+    /* --- PMM --- */
     pmm_init(&g_boot_info);
 
-    /* Защищаем страницы memory_map — shell их читает через 'mem'. */
     {
         uint64_t map_start = (uint64_t)g_boot_info.memory_map & ~0xFFFULL;
         uint64_t map_end   = ((uint64_t)g_boot_info.memory_map +
@@ -99,7 +142,6 @@ void kernel_main(boot_info_t *bi) {
                 (uint32_t)map_pages);
     }
 
-    /* Защищаем framebuffer — это MMIO, PMM не должен их выдавать. */
     {
         uint64_t fb_start = g_boot_info.framebuffer_base & ~0xFFFULL;
         uint64_t fb_end   = ((uint64_t)g_boot_info.framebuffer_base +
@@ -110,17 +152,25 @@ void kernel_main(boot_info_t *bi) {
                 (uint32_t)fb_pages);
     }
 
-    /* --- Heap: динамические аллокации мелких объектов --- */
+    /* --- Heap --- */
     heap_init();
 
-    /* --- VMM: свои таблицы страниц --- */
+    /* --- VMM --- */
     vmm_init();
 
-    /* --- PCI: сканирование шины --- */
+    /* --- PCI --- */
     pci_init();
 
-    /* --- USB EHCI: чтение BAR, маппинг MMIO --- */
+    /* --- USB EHCI --- */
     ehci_init();
+    if (ehci_present()) {
+        ehci_init_controller();
+
+        /* Автотест: ищем устройство, сбрасываем порт, читаем дескриптор.
+         * Даже если нет устройств — просто выведет "[AUTO] нет устройств".
+         * Это позволяет проверить работу кода без ручного ввода. */
+        ehci_autotest();
+    }
 
     kprintf("\n[*] Framebuffer: base=%x  size=%u\n",
             g_boot_info.framebuffer_base, g_boot_info.framebuffer_size);
@@ -133,6 +183,5 @@ void kernel_main(boot_info_t *bi) {
 
     shell_run();
 
-    /* Сюда не должны попасть */
     panic("shell вернулся — этого не должно быть");
 }

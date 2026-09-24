@@ -110,6 +110,10 @@ static void cmd_help(void) {
     kprintf("  pci_info      - список PCI устройств\n");
     kprintf("  pci_ehci      - поиск EHCI/xHCI/UHCI контроллеров\n");
     kprintf("  ehci_info     - информация об EHCI контроллере\n");
+    kprintf("  ehci_init     - инициализация EHCI контроллера\n");
+    kprintf("  ehci_ports    - состояние портов EHCI\n");
+    kprintf("  ehci_reset N  - сброс порта N\n");
+    kprintf("  ehci_device   - чтение Device Descriptor (addr=0)\n");
     kprintf("  history       - история команд\n");
     kprintf("  echo X        - напечатать X\n");
     kprintf("  clear         - очистить экран\n");
@@ -619,6 +623,52 @@ static void cmd_ehci_info(void) {
     ehci_dump();
 }
 
+static void cmd_ehci_init(void) {
+    ehci_init_controller();
+}
+
+static void cmd_ehci_ports(void) {
+    ehci_dump_ports();
+}
+
+static void cmd_ehci_reset(const char *args) {
+    while (*args == ' ') args++;
+    int port = 0;
+    if (*args >= '0' && *args <= '9') port = *args - '0';
+
+    ehci_reset_port(port);
+    kprintf("\n");
+    ehci_dump_ports();
+}
+
+static void cmd_ehci_device(void) {
+    kprintf("EHCI: чтение Device Descriptor с addr=0, ep=0...\n\n");
+
+    usb_device_descriptor_t desc;
+    int r = ehci_get_device_descriptor(0, &desc);
+
+    if (r != 0) {
+        kprintf("FAIL: control transfer не удался (r=%d)\n", r);
+        return;
+    }
+
+    kprintf("Device Descriptor:\n");
+    kprintf("  bLength            = %u\n", (uint32_t)desc.bLength);
+    kprintf("  bDescriptorType    = %u\n", (uint32_t)desc.bDescriptorType);
+    kprintf("  bcdUSB             = %x\n", (uint32_t)desc.bcdUSB);
+    kprintf("  bDeviceClass       = %u\n", (uint32_t)desc.bDeviceClass);
+    kprintf("  bDeviceSubClass    = %u\n", (uint32_t)desc.bDeviceSubClass);
+    kprintf("  bDeviceProtocol    = %u\n", (uint32_t)desc.bDeviceProtocol);
+    kprintf("  bMaxPacketSize0    = %u\n", (uint32_t)desc.bMaxPacketSize0);
+    kprintf("  idVendor           = %x\n", (uint32_t)desc.idVendor);
+    kprintf("  idProduct          = %x\n", (uint32_t)desc.idProduct);
+    kprintf("  bcdDevice          = %x\n", (uint32_t)desc.bcdDevice);
+    kprintf("  iManufacturer      = %u\n", (uint32_t)desc.iManufacturer);
+    kprintf("  iProduct           = %u\n", (uint32_t)desc.iProduct);
+    kprintf("  iSerialNumber      = %u\n", (uint32_t)desc.iSerialNumber);
+    kprintf("  bNumConfigurations = %u\n", (uint32_t)desc.bNumConfigurations);
+}
+
 /* --- history --- */
 
 static void cmd_history(void) {
@@ -675,6 +725,10 @@ static void execute(const char *line) {
     if (str_starts_with(line, "pci_info"))     { cmd_pci_info();     return; }
     if (str_starts_with(line, "pci_ehci"))     { cmd_pci_ehci();     return; }
     if (str_starts_with(line, "ehci_info"))    { cmd_ehci_info();    return; }
+    if (str_starts_with(line, "ehci_init"))    { cmd_ehci_init();    return; }
+    if (str_starts_with(line, "ehci_ports"))   { cmd_ehci_ports();   return; }
+    if (str_starts_with(line, "ehci_reset"))   { cmd_ehci_reset(line+10); return; }
+    if (str_starts_with(line, "ehci_device"))  { cmd_ehci_device();  return; }
     if (str_starts_with(line, "history"))      { cmd_history();      return; }
     if (str_starts_with(line, "clear"))        { cmd_clear();        return; }
     if (str_starts_with(line, "panic"))        { cmd_panic();        return; }
