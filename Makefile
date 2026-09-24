@@ -34,7 +34,8 @@ KERNEL_C_SRC := kernel/main.c \
                 kernel/mm/pmm.c \
                 kernel/mm/heap.c \
                 kernel/mm/kmalloc.c \
-                kernel/mm/vmm.c
+                kernel/mm/vmm.c \
+                kernel/bus/pci.c
 
 KERNEL_ASM_SRC := kernel/boot.asm \
                   kernel/arch/x86_64/gdt_flush.asm \
@@ -103,6 +104,7 @@ run-gtk: image
 	qemu-system-x86_64 \
 	    -machine q35 \
 	    -m 1024 \
+	    -device usb-ehci \
 	    -drive if=pflash,format=raw,readonly=on,file=$(OVMF) \
 	    -drive format=raw,file=fat:rw:build/esp \
 	    -serial file:build/serial.log \

@@ -9,6 +9,7 @@
 #include "../mm/kmalloc.h"
 #include "../mm/heap.h"
 #include "../mm/vmm.h"
+#include "../bus/pci.h"
 #include <stdint.h>
 #include <boot_info.h>
 
@@ -59,7 +60,6 @@ static void pad_name(const char *s, int width) {
     for (int i = n; i < width; i++) kprintf(" ");
 }
 
-/* Парсинг hex-строки в uint64_t */
 static uint64_t parse_hex(const char *s) {
     while (*s == ' ') s++;
     if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) s += 2;
@@ -106,6 +106,8 @@ static void cmd_help(void) {
     kprintf("  vmm_info      - текущее address space, CR3\n");
     kprintf("  vmm_walk X    - пройти по 4 уровням для адреса X\n");
     kprintf("  vmm_test      - создать AS, замапить, переключиться\n");
+    kprintf("  pci_info      - список PCI устройств\n");
+    kprintf("  pci_ehci      - поиск EHCI/xHCI/UHCI контроллеров\n");
     kprintf("  history       - история команд\n");
     kprintf("  echo X        - напечатать X\n");
     kprintf("  clear         - очистить экран\n");
@@ -550,6 +552,65 @@ static void cmd_vmm_test(void) {
     kprintf("Результат: OK\n");
 }
 
+/* --- PCI --- */
+
+static void cmd_pci_info(void) {
+    pci_dump();
+}
+
+static void cmd_pci_ehci(void) {
+    pci_device_t d;
+
+    kprintf("Поиск USB контроллеров...\n\n");
+
+    if (pci_find_ehci(&d) > 0) {
+        kprintf("EHCI найден:\n");
+        kprintf("  %u:%u.%u  Vendor:Device = %x:%x\n",
+                (uint32_t)d.bus, (uint32_t)d.device, (uint32_t)d.function,
+                d.vendor_id, d.device_id);
+        kprintf("  Rev=%u ProgIF=%x\n",
+                (uint32_t)d.revision, (uint32_t)d.prog_if);
+    } else {
+        kprintf("EHCI не найден.\n");
+    }
+
+    kprintf("\n");
+
+    if (pci_find_xhci(&d) > 0) {
+        kprintf("xHCI найден:\n");
+        kprintf("  %u:%u.%u  Vendor:Device = %x:%x\n",
+                (uint32_t)d.bus, (uint32_t)d.device, (uint32_t)d.function,
+                d.vendor_id, d.device_id);
+    } else {
+        kprintf("xHCI не найден.\n");
+    }
+
+    kprintf("\n");
+
+    pci_device_t u[8];
+    int n = pci_find(PCI_CLASS_SERIAL_BUS, PCI_SUBCLASS_USB,
+                     PCI_PROGIF_UHCI, u, 8);
+    kprintf("UHCI найдено: %d\n", n);
+    for (int i = 0; i < n; i++) {
+        kprintf("  %u:%u.%u  %x:%x\n",
+                (uint32_t)u[i].bus, (uint32_t)u[i].device,
+                (uint32_t)u[i].function,
+                u[i].vendor_id, u[i].device_id);
+    }
+
+    kprintf("\n");
+
+    int m = pci_find(PCI_CLASS_SERIAL_BUS, PCI_SUBCLASS_USB,
+                     PCI_PROGIF_OHCI, u, 8);
+    kprintf("OHCI найдено: %d\n", m);
+    for (int i = 0; i < m; i++) {
+        kprintf("  %u:%u.%u  %x:%x\n",
+                (uint32_t)u[i].bus, (uint32_t)u[i].device,
+                (uint32_t)u[i].function,
+                u[i].vendor_id, u[i].device_id);
+    }
+}
+
 /* --- history --- */
 
 static void cmd_history(void) {
@@ -603,6 +664,8 @@ static void execute(const char *line) {
     if (str_starts_with(line, "vmm_walk "))    { cmd_vmm_walk(line+9); return; }
     if (str_starts_with(line, "vmm_walk"))     { cmd_vmm_walk("0");   return; }
     if (str_starts_with(line, "vmm_test"))     { cmd_vmm_test();     return; }
+    if (str_starts_with(line, "pci_info"))     { cmd_pci_info();     return; }
+    if (str_starts_with(line, "pci_ehci"))     { cmd_pci_ehci();     return; }
     if (str_starts_with(line, "history"))      { cmd_history();      return; }
     if (str_starts_with(line, "clear"))        { cmd_clear();        return; }
     if (str_starts_with(line, "panic"))        { cmd_panic();        return; }

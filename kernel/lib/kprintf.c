@@ -23,8 +23,18 @@ static void emit_dec(uint64_t v) {
 
 static void emit_hex(uint64_t v) {
     emit('0'); emit('x');
+
+    if (v == 0) {
+        emit('0');
+        return;
+    }
+
+    /* Находим старший ненулевой nibble */
+    int started = 0;
     for (int i = 60; i >= 0; i -= 4) {
         int nib = (v >> i) & 0xF;
+        if (!started && nib == 0) continue;
+        started = 1;
         emit(nib < 10 ? '0' + nib : 'a' + nib - 10);
     }
 }

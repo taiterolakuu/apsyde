@@ -15,6 +15,7 @@
 #include "mm/pmm.h"
 #include "mm/heap.h"
 #include "mm/vmm.h"
+#include "bus/pci.h"
 #include "shell/shell.h"
 
 static boot_info_t g_boot_info;
@@ -113,6 +114,9 @@ void kernel_main(boot_info_t *bi) {
 
     /* --- VMM: свои таблицы страниц --- */
     vmm_init();
+
+    /* --- PCI: сканирование шины --- */
+    pci_init();
 
     kprintf("\n[*] Framebuffer: base=%x  size=%u\n",
             g_boot_info.framebuffer_base, g_boot_info.framebuffer_size);
