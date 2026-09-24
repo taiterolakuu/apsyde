@@ -11,6 +11,7 @@
 #include "../mm/vmm.h"
 #include "../bus/pci.h"
 #include "../drivers/usb/ehci.h"
+#include "../input/input.h"
 #include <stdint.h>
 #include <boot_info.h>
 
@@ -756,7 +757,7 @@ void shell_run(void) {
         line[0] = 0;
 
         for (;;) {
-            int c = keyboard_getchar_blocking();
+            int c = input_getchar_blocking();      /* ← здесь */
 
             if (c == '\r' || c == '\n') {
                 line[pos] = 0;

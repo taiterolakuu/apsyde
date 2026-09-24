@@ -17,6 +17,7 @@
 #include "mm/vmm.h"
 #include "bus/pci.h"
 #include "drivers/usb/ehci.h"
+#include "input/input.h"
 #include "shell/shell.h"
 
 static boot_info_t g_boot_info;
@@ -56,7 +57,6 @@ static void timer_handler(regs_t *r) {
 static void ehci_autotest(void) {
     kprintf("\n[AUTO] EHCI ports scan:\n");
 
-    /* Проверяем все порты (до 16, но реально g_num_ports) */
     int found_port = -1;
     for (int p = 0; p < 16; p++) {
         if (ehci_port_connected(p)) {
@@ -71,10 +71,8 @@ static void ehci_autotest(void) {
         return;
     }
 
-    /* Reset найденного порта */
     ehci_reset_port(found_port);
 
-    /* Пробуем прочитать Device Descriptor с addr=0 */
     usb_device_descriptor_t desc;
     if (ehci_get_device_descriptor(0, &desc) != 0) {
         kprintf("[AUTO] GET_DESCRIPTOR failed\n");
@@ -129,6 +127,9 @@ void kernel_main(boot_info_t *bi) {
     keyboard_init();
     kprintf("[+] PS/2 клавиатура подключена (IRQ1)\n");
 
+    /* --- Input abstraction (PS/2 + USB + DEMO fallback) --- */
+    input_init();
+
     /* --- PMM --- */
     pmm_init(&g_boot_info);
 
@@ -165,10 +166,6 @@ void kernel_main(boot_info_t *bi) {
     ehci_init();
     if (ehci_present()) {
         ehci_init_controller();
-
-        /* Автотест: ищем устройство, сбрасываем порт, читаем дескриптор.
-         * Даже если нет устройств — просто выведет "[AUTO] нет устройств".
-         * Это позволяет проверить работу кода без ручного ввода. */
         ehci_autotest();
     }
 
