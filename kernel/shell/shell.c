@@ -10,6 +10,7 @@
 #include "../mm/heap.h"
 #include "../mm/vmm.h"
 #include "../bus/pci.h"
+#include "../drivers/usb/ehci.h"
 #include <stdint.h>
 #include <boot_info.h>
 
@@ -108,6 +109,7 @@ static void cmd_help(void) {
     kprintf("  vmm_test      - создать AS, замапить, переключиться\n");
     kprintf("  pci_info      - список PCI устройств\n");
     kprintf("  pci_ehci      - поиск EHCI/xHCI/UHCI контроллеров\n");
+    kprintf("  ehci_info     - информация об EHCI контроллере\n");
     kprintf("  history       - история команд\n");
     kprintf("  echo X        - напечатать X\n");
     kprintf("  clear         - очистить экран\n");
@@ -611,6 +613,12 @@ static void cmd_pci_ehci(void) {
     }
 }
 
+/* --- EHCI --- */
+
+static void cmd_ehci_info(void) {
+    ehci_dump();
+}
+
 /* --- history --- */
 
 static void cmd_history(void) {
@@ -666,6 +674,7 @@ static void execute(const char *line) {
     if (str_starts_with(line, "vmm_test"))     { cmd_vmm_test();     return; }
     if (str_starts_with(line, "pci_info"))     { cmd_pci_info();     return; }
     if (str_starts_with(line, "pci_ehci"))     { cmd_pci_ehci();     return; }
+    if (str_starts_with(line, "ehci_info"))    { cmd_ehci_info();    return; }
     if (str_starts_with(line, "history"))      { cmd_history();      return; }
     if (str_starts_with(line, "clear"))        { cmd_clear();        return; }
     if (str_starts_with(line, "panic"))        { cmd_panic();        return; }

@@ -35,7 +35,8 @@ KERNEL_C_SRC := kernel/main.c \
                 kernel/mm/heap.c \
                 kernel/mm/kmalloc.c \
                 kernel/mm/vmm.c \
-                kernel/bus/pci.c
+                kernel/bus/pci.c \
+                kernel/drivers/usb/ehci.c
 
 KERNEL_ASM_SRC := kernel/boot.asm \
                   kernel/arch/x86_64/gdt_flush.asm \

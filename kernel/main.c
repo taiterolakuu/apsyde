@@ -16,6 +16,7 @@
 #include "mm/heap.h"
 #include "mm/vmm.h"
 #include "bus/pci.h"
+#include "drivers/usb/ehci.h"
 #include "shell/shell.h"
 
 static boot_info_t g_boot_info;
@@ -117,6 +118,9 @@ void kernel_main(boot_info_t *bi) {
 
     /* --- PCI: сканирование шины --- */
     pci_init();
+
+    /* --- USB EHCI: чтение BAR, маппинг MMIO --- */
+    ehci_init();
 
     kprintf("\n[*] Framebuffer: base=%x  size=%u\n",
             g_boot_info.framebuffer_base, g_boot_info.framebuffer_size);
